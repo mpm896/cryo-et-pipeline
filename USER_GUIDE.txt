@@ -1,0 +1,182 @@
+Pipeline for cryo-ET data processing 
+
+Matthew Martinez
+Sanofi US - Structural Biology, Protein Engineering, Large Molecules Research
+
+Last modified: Aug 13, 2024
+-----------------------------------------------------------------------------
+
+
+I. Submitting a pipeline job 
+
+    1. Collect tilt series data on the Glacios. Data should be stored in /cloud-data/its-cmo-darwin-cryoem-virginia/cryoem_internal/cambridge/OffloadData/ or cp://its-cmo-darwin-cryoem-virginia/cryoem_internal/cambridge/OffloadData/, depending on if you're SSH'd into the cloud or accessing locally via pipe, respectfully. 
+
+    2. On a Magellan instance, launch the Docker image "cryo-et – version 0.2" 
+
+    3. Recommended at least 1 GPU, at least 12 CPUs 
+
+    4. Create a new directory inside ~/workdir 
+
+    5. Submit pipeline script. -> submit_imod_pipeline.sh  
+
+	a. File location (from laptop if S3 is mounted) -> s3://its-cmo-darwin-magellan-workspaces-folders/WS_Cryoem/CX_LMR/Project_directories/cryo-et-pipeline/submit_imod_pipeline.sh 
+
+	b. File location (from Magellan instance) -> /root/cloud-data/its-cmo-darwin-magellan-workspaces-folders/WS_Cryoem/CX_LMR/Project_directories/cryo-et-pipeline  
+
+    6. Copy the pipeline script, submit_imod_pipeline.sh, to your local directory in workdir. Open the file (Vim/Nano/etc), and edit all the parameters in the top portion of the script 
+
+	a. For example, input the directory where your raw data is located, IMOD motion correction and tomogram reconstruction parameters, etc 
+    
+    7. You have the options to: 
+    
+	a. Copy data from the OffloadData location to your workdir (if you're starting fresh, or if the data is already copied onto workdir) 
+    
+	b. Do motion correction of raw frames. This should be done if you're submitting for the first time, but can be turned off if you, for some reason, had to kill the job after motion correction 
+    
+    8. You must enter your user database ID as one of the parameters. If you do not have a user Database ID, contact Matthew Martinez (Matthew.Martinez@sanofi.com) to assign you a user database ID 
+    
+	a. The database ID determines the unique database ID that is given to each dataset, as well as who the data belongs to on the web interface 
+
+----------------------------------------------------------------------------
+ 
+
+II. Viewing the progress of a pipeline job 
+ 
+
+    1. Except for the initial data transfer to the workdir, pipeline jobs are run within a program called tmux. This is to allow you, the user, to close you terminal or SSH session without cancelling the job 
+    
+    2. To view all the different jobs being run via tmux, in a terminal run the command: tmux ls 
+    
+    3. To view the progress of a specific job, you can attach the tmux session to your terminal so that you can see what is happening: tmux a –t session_name 
+    
+    4. To detach the tmux session so you no longer see the progress (and so you can use the terminal tab), type: ctrl-b d 
+    
+    5. To kill a tmux session (thus killing a pipeline process), run: tmux –t session_name kill-session 
+    
+    6. To kill all the tmux sessions (thus killing the entire pipeline job), run: tmux kill-server 
+
+----------------------------------------------------------------------------
+ 
+
+III. What the pipeline job is doing behind the scenes 
+ 
+
+    1. The main pipeline script has 4 main jobs: 
+    
+	a. Transfer raw data to the workdir 
+    	
+    	b. Perform motion correction of the individual frames to create a motion corrected tilt series 
+    	
+    	c. Reconstruct each tilt series into a tomogram 
+    	
+    	d. Insert each dataset into the cryo-ET database (NOT YET IMPLEMENTED) and transfer to the database location 
+    	
+	   i. /root/cloud-data/its-cmo-darwin-magellan-workspaces-folders/WS_Cryoem/CX_LMR/Project_directories/cryo-et-data 
+
+ -----
+
+    1. Transfer raw data to the workdir 
+
+	a. The main function here is to transfer data from an S3 location (I.e. OffloadData) to the workdir, which is a network filesystem  
+    	
+    	b. In this portion of the script, certain files will be modified depending on if the data was collected with Thermo Tomography 5 or with SerialEM 
+    	
+    	    i. If collected with Tomography 5: 
+    		
+		1. Mdoc files will be renamed so that the full file extension is .mrc.mdoc 
+    		   
+		2. The mdoc files will be modified to display the correct tilt axis, agreeing with the SerialEM and IMOD conventions 
+    		   
+    		3. Duplicate mdocs will be deleted 
+    		   
+    		4. Frame/fraction files will be moved into a subdirectory 
+
+ 
+
+    2. Perform motion correction of the individual frames to create a motion corrected tilt series 
+
+	a. The main function here is to perform motion correction of the dose-fractionated frames, and assemble them into a tilt series for downstream processing 
+
+	b. This is performed by running framewatcher, which is an IMOD command that watches a directory for frames/tilt series and runs Alignframes to do the motion correction 
+
+	c. Dose-weighting can optionally be performed here 
+
+	d. Output filename is: filename_ali.mrc 
+
+ 
+
+    3. Reconstruct each tilt series into a tomogram 
+
+	a. The main function here is to automatically reconstruct each tilt series (2D) into a tomogram (3D), given a set of parameters provided in the pipeline script 
+
+	b. This is performed by running serieswatcher, which is an IMOD command that watched a directory for tilt series and runs batchruntomo to do the tomogram reconstruction 
+
+	c. This is run via the script db_reconstruct.py 
+
+	d. Tilt series alignment can optionally be done with patch tracking or fiducial tracking 
+
+	e. Output filename is: filename_rec.mrc 
+
+ 
+
+    4. Insert each dataset into the cryo-ET database (NOT YET IMPLEMENTED) and transfer to the database location 
+
+	a. The main function here is to updata the database with each processed dataset, and to transfer the data to a centralized location on the S3 
+
+	    i. Data is transferred to: /root/cloud-data/its-cmo-darwin-magellan-workspaces-folders/WS_Cryoem/CX_LMR/Project_directories/cryo-et-data 
+
+	b. This is run via the script db_transfer.py 
+
+	c. Each dataset is assigned a unique ID based on the user's initials and the date of collection/processing 
+
+----------------------------------------------------------------------------
+ 
+ 
+
+IV. Understanding the data that is output by the pipeline job 
+
+ 
+
+    1. During initial data transfer from the S3 (or OffloadData), the data is transferred to the workdir into a directory with the same name that the data was originally in 
+
+    2. During motion correction, all motion corrected tilt series will be moved into a directory called Aligned 
+
+	a. Inside Aligned/ is a subdirectory called alignedJPG, within which you can find a power spectrum for every dataset 
+
+    3. During motion correction, after the tilt series is motion corrected, the original tilt series is moved into a subdirectory called Processed/ 
+
+    4. During tomogram reconstruction, every tilt series in Aligned/ will be processed in a subdirectory with the same name as the tilt series.  
+
+    5. During data transfer to the database, all data is copied to /root/cloud-data/its-cmo-darwin-magellan-workspaces-folders/WS_Cryoem/CX_LMR/Project_directories/cryo-et-data  
+
+	a. Each dataset is copied into a directory with its unique database ID 
+
+	    i. Frames associated with this dataset are copied into a subdirectory called Frames/ 
+
+	b. After being copied, each dataset within Aligned/ is moved into a subdirectory called Done/ 
+
+    6. Various logs are created during the database transfer step: 
+
+	a. Each log filename begins with the date and time it was created 
+
+	b. The master log (ending in TRANSFERS.log) contains some information on the bulk progress of the datasets during transfer 
+
+	c. Each dataset has an associated log. Each log name contains the date, time, original dataset name, and unique database ID. Consult these for progress on the database transfer. 
+
+
+----------------------------------------------------------------------------
+
+
+V. TESTING THE PIPELINE
+
+    1. Test datasets are available at /root/cloud-data/its-cmo-darwin-magellan-workspaces-folders/WS_Cryoem/CX_LMR/Project_directories/cryo-et-test
+
+	a. The data available is as if it were data freshly collected off the Glacios, so the frames have not undergone motion correction or any other processing
+
+    2. Copy the submission script, submit_imod_pipeline.sh, from ../cryo-et-pipeline to your workdir
+
+    3. Modify the parameters in the top half of the submission script (open in your favorite text editor, such as vim or nano)
+
+    4. Submit the script with: sh submit_imod_pipeline.sh 
+
+	a. Watch the magic! If you run into issues, contact Matthew Martinez (Matthew.Martinez@sanofi.com)

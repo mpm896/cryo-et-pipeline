@@ -67,7 +67,7 @@ TILTAXIS=-87    # Leave as "EMPTY" if data was collected with serialEM
 TRANFER_RAW_DATA=0          # Whether or not to transfer raw data from the microscope PC (i.e. you already did the transfer)
                                 # 0: Do not do data transfer
                                 # 1: Do the data transfer
-RAW_DATA_DIR=/root/cloud-data/its-cmo-darwin-cryoem-virginia/cryoem_internal/cambridge/OffloadData/20240625_MM004_g4/  # Path to raw frames
+RAW_DATA_DIR=/cloud-data/its-cmo-darwin-magellan-workspaces-folders/WS_Cryoem/CX_LMR/Project_directories/cryo-et-test  # Path to raw frames
 FRAMES_NAME=Fractions       # Common word in the filenames of ALL THE FRAMES
                                 #   - If collected in Tomography 5 with dose fractionation, frames should have "Fractions" in their name
                                 #   - If collected in serialEM, not as important since you should have been set to save raw frames in a "Frames" subdirectory
@@ -169,11 +169,18 @@ REORIENT=2                  # Reorientation to do during trimvol
                             #   1: Flip
                             #   2: Rotate around X
 
+
+# *** DENOISING AND MISSING WEDGE CORRECTION ***
+DO_DENOISING=1		    # 0: Do not setup files for denoising
+			            # 1: Setup files for denoising and missing wedge correction with DeepDeWedge
+
 USER_DB_ID=1
 
 # Scripts for tomogram reconstruction and data transfer
 PY_RECONSTRUCT=/cloud-data/its-cmo-darwin-magellan-workspaces-folders/WS_Cryoem/CX_LMR/Project_directories/cryo-et-pipeline/db_reconstruct.py
 PY_TRANSFER=/cloud-data/its-cmo-darwin-magellan-workspaces-folders/WS_Cryoem/CX_LMR/Project_directories/cryo-et-pipeline/db_transfer.py
+PY_HALFTOMO=/cloud-data/its-cmo-darwin-magellan-workspaces-folders/WS_Cryoem/CX_LMR/Project_directories/cryo-et-pipeline/halftomo_reconstruct.py
+PY_DDW=/cloud-data/its-cmo-darwin-magellan-workspaces-folders/WS_Cryoem/CX_LMR/Project_directories/cryo-et-pipeline/pyDDW.py
 
 
 
@@ -311,6 +318,10 @@ ScalingOfSum 16.000000" > $MASTER_FRAMEWATCHER_COM
 # *** SUBMIT JOBS ***
 # ===================
 
+# Kill all processes to start from a clean slate
+pkill -9 -f framewatcher
+pkill -9 -f serieswatcher
+
 FW_PIPELINE=fw_pipeline 
 BRT_PIPELINE=brt_pipeline
 DB_PIPELINE=db_pipeline
@@ -344,8 +355,7 @@ tmux send-keys "python $PY_RECONSTRUCT $CPUS $GPUS $OUT_DIR $READ_MDOC $REMOVE_X
     $PATCH_OVERLAP_X $PATCH_OVERLAP_Y $DO_CTF $DEFOCUS_RANGE_LOW $DEFOCUS_RANGE_HIGH $AUTOFIT_RANGE $AUTOFIT_STEP \
     $TUNE_FITTING_SAMPLING $FAKE_SIRT_ITERS" C-m
 
-# SUBMIT DATABASE TRANSFER JOB
-DB_PIPELINE=db_pipeline     
+# SUBMIT DATABASE TRANSFER JOB  
 typewriter "===== WATCHING FOR COMPLETED JOBS TO TRANSFER TO DATABASE =====" 0.02
 typewriter "===== See progress with 'tmux a -t $DB_PIPELINE' =====" 0.02
 
@@ -358,3 +368,35 @@ echo "View a specific tmux session: tmux a -t session_name"
 echo "Detach the session (to regain control of the terminal): Ctrl-b d"
 echo "Kill a specific tmux session: tmux -t session_name kill-session"
 echo "Kill all tmux sessions: tmux kill-server"
+
+
+if [[ $DO_DENOISING -eq 1 ]]; then
+    echo
+    typewriter "Waiting to begin half-tomo generation for denoising..." 0.02
+    echo
+
+    # Watch for serieswatcher child processes. If no more after some time, move forward with denoising (if selected)
+    num_sw=$(pgrep -c -f serieswatcher)
+
+    # Don't want the denoising to start until some processes have began
+    while [[ $num_sw -lt 2 ]]; do
+        echo "No new reconstruction processes. Sleeping..."
+        sleep 30s
+        num_sw=$(pgrep -c -f serieswatcher)
+    done
+
+    # Now, want to wait until serieswatcher is done
+    while [[ $num_sw -gt 1 ]]; do
+        echo "Serieswatcher is running. Sleeping..."
+        sleep 30s
+        num_sw=$(pgrep -c -f serieswatcher)
+    done
+
+    DONE_DIR=$OUT_DIR/Done
+    DN_PROC=dn_proc
+
+    tmux new-session -d -s $DN_PROC
+    tmux send-keys "python $PY_HALFTOMO 1 $DONE_DIR" C-m
+fi
+
+

@@ -333,7 +333,7 @@ class CryoETDB:
         ali_files = list(dataset_dir.glob('*_ali.mrc'))
         ali = max(ali_files).name
         
-        cmd = f"rsync --ignore-existing -a --exclude={{'*~','*.log*','*.com*','*.adoc','dfltcoms','origcoms','{ali}','*_preali.mrc','*_full_rec.mrc','*.out'}} {dataset_dir}/ {transfer_path}"
+        cmd = f"rsync --ignore-existing -a --exclude={{'*~','*.log*','*.adoc','dfltcoms','origcoms','{ali}','*_preali.mrc','*_full_rec.mrc','*.out'}} {dataset_dir}/ {transfer_path}"
         return cmd
     
 
@@ -428,7 +428,16 @@ while True:
 
     end = time.time()
     if (end - start) > TIMEOUT:
-        cmd = 'tmux kill-server'  # Recontruction and transfer being run in a tmux session
+        fw_pipeline = 'fw_pipeline'
+        brt_pipeline = 'brt_pipeline'
+        transfer_pipeline = 'db_pipeline'
+        
+        cmd = f'tmux kill-session -t {fw_pipeline}'  # Recontruction and transfer being run in a tmux session
         subprocess.run(cmd, shell=True)
+        cmd = f'tmux kill-session -t {brt_pipeline}'
+        subprocess.run(cmd, shell=True)
+        cmd = f'tmux kill-session -t {transfer_pipeline}'
+        subprocess.run(cmd, shell=True)
+
         break
     time.sleep(60)

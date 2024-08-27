@@ -24,6 +24,7 @@ from typing import Generator
 
 import mrcfile
 
+
 DB_DIR = '/root/cloud-data/its-cmo-darwin-magellan-workspaces-folders/WS_Cryoem/CX_LMR/Project_directories/cryo-et-data'
 EXT = '*_rec.mrc'  # Suffix of completed tomogram
 BIN = 6  # Bin factor
@@ -42,14 +43,6 @@ formatter = logging.Formatter(
     style="{",
     datefmt="%Y-%m-%d %H:%M"
 )
-
-logger = logging.getLogger(__name__)
-filename = f'{time.strftime("%Y%m%d_%H%M", time.localtime())}_HALF-TOMO.log'
-handler = logging.FileHandler(filename)
-handler.setFormatter(formatter)
-logger.setLevel(logging.INFO)
-logger.addHandler(handler)
-
 
 @contextlib.contextmanager
 def chdir(path: str | Path) -> Generator[None, None, None]:
@@ -77,7 +70,7 @@ def check_metadata(dataset: Path) -> int:
         2 - partial metadata, need to run both newstack and tilt
     """
     db_set = dataset.name.split('/')[0]
-    name = list(dataset.glob('*_rec.mrc'))[0].name.split('_rec')[0]
+    name = [x for x in dataset.glob('*_rec.mrc') if 'full' not in x.name][0].name.split('_rec')[0]
     
     xf = list(dataset.glob(f'{name}.xf'))
     ali = list(dataset.glob(f'{name}_ali.mrc'))
@@ -104,7 +97,7 @@ def check_metadata(dataset: Path) -> int:
 
 def construct_coms(dataset: Path, status: int) -> None:
     """ Construct the newstack.com and tilt.com files """
-    name = list(dataset.glob('*_rec.mrc'))[0].name.split('_rec')[0]
+    name = [x for x in dataset.glob('*_rec.mrc') if 'full' not in x.name][0].name.split('_rec')[0]
     mdoc = list(dataset.glob(f'{name}*.mdoc'))[0]
 
     logger.info('Identified MDOC file %s' % mdoc.name)
@@ -139,6 +132,12 @@ def construct_coms(dataset: Path, status: int) -> None:
     tilt_evens = dataset / Path('tilt_evens.com')
     tilt_odds = dataset / Path('tilt_odds.com')
     
+    if tilt_evens.exists():
+       tilt_evens.unlink()
+    if tilt_odds.exists():
+        tilt_odds.unlink() 
+
+
     mrc = dataset / Path(f'{name}.mrc')
     rec = dataset / Path(f'{name}_rec.mrc')
 
@@ -158,26 +157,27 @@ def construct_coms(dataset: Path, status: int) -> None:
 
     # Write the files based on the preexisting tilt.com
     if tilt_com.exists():
+        logger.info('Creating tilt coms based off of existing com files.')
         with tilt_com.open('r') as f:
             for line in f:
                 if 'InputProjections' in line:
-                    line = f'InputProjections {name}_ali.mrc'
+                    line = f'InputProjections {name}_ali.mrc\n'
                 if 'OutputFile' in line:
                     with tilt_evens.open('a') as t:
-                        line = f'OutputFile	{name}_full_rec_evens.mrc'
+                        line = f'OutputFile	{name}_full_rec_evens.mrc\n'
                         t.write(line)
                     with tilt_odds.open('a') as t:
-                        line = f'OutputFile	{name}_full_rec_odds.mrc'
+                        line = f'OutputFile	{name}_full_rec_odds.mrc\n'
                         t.write(line)
                     continue
                 if 'IMAGEBINNED' in line:
-                    line = f'IMAGEBINNED	{BIN}'
+                    line = f'IMAGEBINNED	{BIN}\n'
                 if 'TILTFILE' in line:
-                    line = f'TILTFILE {name}.tlt'
+                    line = f'TILTFILE {name}.tlt\n'
                 if 'XTILTFILE' in line:
-                    line = f'XTILTFILE {name}.xtilt'
+                    line = f'XTILTFILE {name}.xtilt\n'
                 if 'useGPU' in line:
-                    f'UseGPU	{GPU}'
+                    line = f'UseGPU	    {GPU}\n'
 
                 with tilt_evens.open('a') as t:
                     t.write(line)
@@ -189,6 +189,7 @@ def construct_coms(dataset: Path, status: int) -> None:
         with tilt_odds.open('a') as f:
             f.write(f'{odds}')
     else:
+        logger.info('Creating brand new tilt com files.')
         rec_bin = full_mage_size[0] // rec_image_size[0]
         rec_thickness = int(rec_bin * rec_image_size[2])
 
@@ -248,7 +249,7 @@ def newstack(dataset: Path) -> bool:
         False if error  
      """
     db_set = dataset.name.split('/')[0]
-    name = list(dataset.glob('*_rec.mrc'))[0].name.split('_rec')[0]
+    name = [x for x in dataset.glob('*_rec.mrc') if 'full' not in x.name][0].name.split('_rec')[0]
 
     cmd = 'subm newst.com'
     with chdir(dataset):
@@ -282,7 +283,7 @@ def tilt(dataset: Path) -> bool:
         False is error 
      """
     db_set = dataset.name.split('/')[0]
-    name = list(dataset.glob('*_rec.mrc'))[0].name.split('_rec')[0]
+    name = [x for x in dataset.glob('*_rec.mrc') if 'full' not in x.name][0].name.split('_rec')[0]
     
     with chdir(dataset):
 
@@ -337,7 +338,7 @@ def trimvol(dataset: Path) -> bool:
         False if error
     """
     db_set = dataset.name.split('/')[0]
-    name = list(dataset.glob('*_rec.mrc'))[0].name.split('_rec')[0]
+    name = [x for x in dataset.glob('*_rec.mrc')if 'full' not in x.name][0].name.split('_rec')[0]
     with chdir(dataset):
         full_rec_evens = f'{name}_full_rec_evens.mrc'
         rec_evens = f'{name}_rec_evens.mrc'
@@ -403,10 +404,13 @@ def generate_halfsets(p: Path) -> None:
             # Run newstack and tilt to generate the aligned tilt series and tomogram, respectively
             if prog == 2:
                 if not newstack(d):
+                    logging.error('%s -- Error in newstack. Terminating this dataset...' % d.name)
                     continue
             if not tilt(d):
+                logging.error('%s -- Error in tilt. Terminating this dataset...' % d.name)
                 continue
             if not trimvol(d):
+                logging.error('%s -- error in trimvol. Terminating this dataset...' % d.name)
                 continue
 
 
@@ -430,15 +434,18 @@ def subtransfer(p: Path) -> None:
 def sync_db(p: Path) -> None:
     """ Sync halfset subdirs with the database S3 location """
     subdirs = p.rglob('halfsets')
-    logger.info('\nSynching the halfset reconstructions to the database')
+    logger.info('\n%s -- Synching the halfset reconstructions to the database' % p.name)
     for d in subdirs:
         src = d.as_posix()
         subdir = src.split('/')[-2]
         dest = f'{DB_DIR}/{subdir}'
-        cmd = f'rsync --progress -avhr {src} {dest}'
-        subprocess.run(cmd, shell=True)
 
-    logger.info('Finished synching halfset reconstructions to the database')
+        if Path(dest).exists():
+            cmd = f'rsync --progress -avhr {src} {dest}'
+            subprocess.run(cmd, shell=True)
+            logger.info('%s -- Finished synching halfset reconstructions to the database' % p.name)
+        else:
+            logger.warning('%s -- Does not yet exist in database. Skipping sync to database' % p.name)
 
 
 # Determine if this is running during the pipeline or standalone
@@ -450,10 +457,28 @@ if len(sys.argv) == 2:
     p = Path.cwd()
 elif len(sys.argv) == 3:
     p = Path(sys.argv[2])
+    print(p)
     assert p.exists(), f"Given path {p} does not exist"
     assert p.is_dir(), f"Given path {p} is not a valid directory"
 
-# generate_halfsets(p)
-# subtransfer(p)
+# Setup logger
+logger = logging.getLogger(__name__)
+filename = f'{p.as_posix()}/{time.strftime("%Y%m%d_%H%M", time.localtime())}_HALF-TOMO.log'
+handler = logging.FileHandler(filename)
+handler.setFormatter(formatter)
+logger.setLevel(logging.INFO)
+logger.addHandler(handler)
+
+# Generate halfsets and transfer to a subdirectory
+generate_halfsets(p)
+subtransfer(p)
+
+# At this point, halfsets are generated and moved into the appropriate locations.
+# Setup denoising in a new tmux session
+pyDDW = "/cloud-data/its-cmo-darwin-magellan-workspaces-folders/WS_Cryoem/CX_LMR/Project_directories/cryo-et-pipeline/pyDDW.py"
+cmd = f'tmux send-keys "python {pyDDW} 1 {p.as_posix()}" C-m'
+subprocess.run(cmd, shell=True)
+
+# Sync to the database S3 location
 sync_db(p)
 
